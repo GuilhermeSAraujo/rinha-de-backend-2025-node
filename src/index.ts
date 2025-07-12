@@ -1,9 +1,16 @@
 import express, { Request, Response } from "express";
-import { MongoClient, Db, ReadPreference } from "mongodb";
+import { Db, MongoClient } from "mongodb";
+import {
+  consumePaymentsFromQueueWithInterval,
+  processPayment,
+  stopPaymentConsumer,
+  verifyServiceAvailabilityWithInterval,
+} from "./paymentProcessor";
+import { addProcessToQueue, closeRedisClient, getQueueLength } from "./paymentQueue";
 
 const app = express();
 const PORT = process.env["PORT"] || 3000;
-const INSTANCE_ID = process.env["INSTANCE_ID"] || "unknown";
+export const INSTANCE_ID = process.env["INSTANCE_ID"] || "unknown";
 
 // MongoDB connection
 const mongoUri =
@@ -27,47 +34,19 @@ const mongoClientOptions = {
   appName: "rinha-backend", // Application name for monitoring
 };
 
-// Connection pool monitoring
-let poolStats = {
-  totalConnections: 0,
-  availableConnections: 0,
-  pendingConnections: 0,
-  activeConnections: 0,
-};
+export let db: Db;
+export let client: MongoClient;
 
-// Monitor connection pool every 30 seconds
-setInterval(() => {
-  if (client) {
-    const pool = (client as any).topology?.s?.options?.maxPoolSize;
-    console.log(`📊 MongoDB Pool Stats: ${JSON.stringify(poolStats)}`);
-  }
-}, 30000);
-
-let db: Db;
-let client: MongoClient;
-
-// Payment processor URLs
-const PAYMENT_PROCESSOR_DEFAULT_URL = "http://payment-processor-default:8080";
-const PAYMENT_PROCESSOR_FALLBACK_URL = "http://payment-processor-fallback:8080";
-
-// In-memory queue for payment requests
-const failedPaymentsQueue: Array<{
-  correlationId: string;
-  amount: number;
-  requestedAt: Date;
-}> = [];
-
-// Service availability tracking
-let useDefaultService = true;
-
-// Middleware
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
 // Disable unnecessary middleware for performance
 app.disable("x-powered-by");
 
-// POST /payments - Accept payment requests
+export type PaymentRequest = {
+  correlationId: string;
+  amount: number;
+};
 app.post("/payments", async (req: Request, res: Response) => {
   try {
     const { correlationId, amount } = req.body;
@@ -79,12 +58,10 @@ app.post("/payments", async (req: Request, res: Response) => {
     const paymentRequest = {
       correlationId,
       amount,
-      requestedAt: new Date(),
     };
 
-    await processPayment(paymentRequest);
+    addProcessToQueue(paymentRequest);
 
-    // Return immediately (async processing)
     return res.status(202).json({ message: "Success", correlationId });
   } catch (error) {
     console.error("Error processing payment request:", error);
@@ -107,7 +84,6 @@ app.get("/payments-summary", async (req: Request, res: Response) => {
       if (to) query.requested_at.$lte = to;
     }
 
-    const queryStartTime = Date.now();
     const paymentsCollection = db.collection("payments").find(query);
 
     const result = {
@@ -122,7 +98,6 @@ app.get("/payments-summary", async (req: Request, res: Response) => {
     };
 
     let processedCount = 0;
-    const processingStartTime = Date.now();
 
     for await (const payment of paymentsCollection) {
       processedCount++;
@@ -139,13 +114,11 @@ app.get("/payments-summary", async (req: Request, res: Response) => {
       }
     }
 
-    const processingTime = Date.now() - processingStartTime;
-
     result.default.totalAmount = Math.round(result.default.totalAmount * 100) / 100;
     result.fallback.totalAmount = Math.round(result.fallback.totalAmount * 100) / 100;
 
-    const totalTime = Date.now() - startTime;
-    console.log(`✅ Payments summary completed in ${totalTime}ms`);
+    console.log(`✅ Payments summary completed in ${Date.now() - startTime}ms`);
+    console.log(`⏳ Queue size: ${await getQueueLength()}`);
 
     res.status(200).json(result);
   } catch (error) {
@@ -167,110 +140,24 @@ app.post("/purge-payments", async (_req: Request, res: Response) => {
   }
 });
 
-// // Background task to process payment queue
-// async function processPaymentQueue() {
-//   while (true) {
-//     if (paymentQueue.length > 0) {
-//       const payment = paymentQueue.shift();
-//       if (payment) {
-//         await processPayment(payment);
-//       }
-//     } else {
-//       await new Promise((resolve) => setTimeout(resolve, 10)); // Small delay when queue is empty
-//     }
-//   }
-// }
-
-// let defaultServiceIsAvailable = true;
-// let firstExecution = true;
-
-// async function verifyDefaultService() {
-//   if (INSTANCE_ID === "01" && firstExecution) {
-//     firstExecution = false;
-//     // await 6 seconds
-//     await new Promise((resolve) => setTimeout(resolve, 6000));
-//   }
-
-//   console.log("Verifying default service health...");
-
-//   try {
-//     const response = await fetch(`${PAYMENT_PROCESSOR_DEFAULT_URL}/payments/service-health`);
-//     if (!response.ok) {
-//       const responseText = await response.text();
-//       console.log("❌ Default service is not available", responseText);
-//       return;
-//     }
-
-//     const data = (await response.json()) as { minResponseTime: number; failing: boolean };
-
-//     defaultServiceIsAvailable = !data.failing;
-//     console.log(`Default service is ${defaultServiceIsAvailable ? "available" : "unavailable"}`, {
-//       minResponseTime: data.minResponseTime,
-//       failing: data.failing,
-//     });
-//   } catch (error) {
-//     console.error("Error checking default service health:", error);
-//     defaultServiceIsAvailable = false;
-//   }
-// }
-
-// // execute verifyDefaultService every 6 seconds
-// setInterval(verifyDefaultService, 6_000);
-
-async function retryFailedPayment() {
-  if (failedPaymentsQueue.length > 0) {
-    const payment = failedPaymentsQueue.shift();
-    console.log("🔄 Retrying failed payment:", payment!.correlationId);
-    // add 1 second delay
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    await processPayment(payment!);
-  }
-}
-
-// execute retryFailedPayment every 1 second
-setInterval(retryFailedPayment, 1000);
-
-async function processPayment(payment: {
-  correlationId: string;
-  amount: number;
-  requestedAt: Date;
-}) {
-  const serviceUrl = useDefaultService
-    ? PAYMENT_PROCESSOR_DEFAULT_URL
-    : PAYMENT_PROCESSOR_FALLBACK_URL;
-  const service = useDefaultService ? "default" : "fallback";
-
-  const response = await fetch(`${serviceUrl}/payments`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Rinha-Token": "123",
-    },
-    body: JSON.stringify({
-      correlationId: payment.correlationId,
-      amount: payment.amount,
-      requestedAt: payment.requestedAt,
-    }),
-  });
-
-  if (response.ok) {
-    // console.log("🟢 Payment processed successfully with service:", service);
-    // Save successful payment to database
-    const collection = db.collection("payments");
-    await collection.insertOne({
-      correlation_id: payment.correlationId,
-      amount: payment.amount,
-      service: service,
-      requested_at: payment.requestedAt,
-      success: true,
+app.get("/health", async (_req: Request, res: Response) => {
+  try {
+    const queueLength = await getQueueLength();
+    res.status(200).json({
+      status: "healthy",
+      instance: INSTANCE_ID,
+      queueLength,
+      timestamp: new Date().toISOString(),
     });
-  } else {
-    // add to queue to retry failed payment
-    failedPaymentsQueue.push(payment);
+  } catch (error) {
+    console.error("Health check error:", error);
+    res.status(500).json({
+      status: "unhealthy",
+      error: "Redis connection failed",
+    });
   }
-}
+});
 
-// Initialize MongoDB connection
 async function initializeDatabase() {
   try {
     client = new MongoClient(mongoUri, mongoClientOptions);
@@ -278,22 +165,27 @@ async function initializeDatabase() {
     db = client.db();
     console.log("✅ Connected to MongoDB");
 
-    // Create indexes for better performance
     const paymentsCollection = db.collection("payments");
     await paymentsCollection.createIndex({ requested_at: 1 });
     console.log("✅ Database indexes created");
 
-    // Start payment queue processor
-    // processPaymentQueue();
+    consumePaymentsFromQueueWithInterval();
+    verifyServiceAvailabilityWithInterval();
   } catch (error) {
     console.error("❌ Failed to connect to MongoDB:", error);
     process.exit(1);
   }
 }
 
+async function initializeRedis() {
+  // Redis is now initialized in paymentQueue.ts
+  console.log("✅ Redis initialization handled by paymentQueue module");
+}
+
 // Start server
 async function startServer() {
   await initializeDatabase();
+  await initializeRedis();
 
   app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT} (Instance: ${INSTANCE_ID})`);
@@ -305,17 +197,21 @@ async function startServer() {
 // Graceful shutdown
 process.on("SIGTERM", async () => {
   console.log("SIGTERM received, shutting down gracefully");
+  stopPaymentConsumer();
   if (client) {
     await client.close();
   }
+  await closeRedisClient();
   process.exit(0);
 });
 
 process.on("SIGINT", async () => {
   console.log("SIGINT received, shutting down gracefully");
+  stopPaymentConsumer();
   if (client) {
     await client.close();
   }
+  await closeRedisClient();
   process.exit(0);
 });
 

@@ -1,5 +1,3 @@
-version: '3.8'
-
 x-service-templates:
   backend: &backend
     build:
@@ -7,6 +5,7 @@ x-service-templates:
       dockerfile: Dockerfile
     depends_on:
       - mongodb
+      - redis
     networks:
       - payment-processor
       - backend
@@ -16,16 +15,10 @@ x-service-templates:
       - NODE_ENV=production
       - PORT=3000
       - MONGODB_URI=mongodb://admin:password123@mongodb:27017/rinha?authSource=admin
+      - REDIS_URL=redis://redis:6379
       - PAYMENT_PROCESSOR_SERVICE_DEFAULT_URL=http://localhost:8001
       - PAYMENT_PROCESSOR_SERVICE_FALLBACK_URL=http://localhost:8002
-    deploy:
-      resources:
-        limits:
-          cpus: "1.0"
-          memory: "1GB"
-        reservations:
-          cpus: "0.5"
-          memory: "512MB"
+
     restart: unless-stopped
 
 services:
@@ -37,6 +30,8 @@ services:
       - MONGO_INITDB_ROOT_USERNAME=admin
       - MONGO_INITDB_ROOT_PASSWORD=password123
       - MONGO_INITDB_DATABASE=rinha
+      - MONGODB_INITDB_SET_MAX_CONNECTIONS=50
+      - MONGODB_INITDB_SET_WIRED_TIGER_CACHE_SIZE_GB=0.1
     ports:
       - "27017:27017"
     volumes:
@@ -47,11 +42,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "1.0"
-          memory: "1GB"
-        reservations:
           cpus: "0.5"
-          memory: "512MB"
+          memory: "180MB"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
@@ -60,31 +52,65 @@ services:
       retries: 3
       start_period: 40s
 
+  redis:
+    image: redis:8.0.3-alpine
+    container_name: redis
+    hostname: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - backend
+    deploy:
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: "20MB"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
   backend-01:
     <<: *backend
     container_name: backend-01
     hostname: backend-01
+    deploy:
+      resources:
+        limits:
+          cpus: "0.4"
+          memory: "70MB"
     environment:
       - NODE_ENV=production
       - PORT=3000
       - MONGODB_URI=mongodb://admin:password123@mongodb:27017/rinha?authSource=admin
+      - REDIS_URL=redis://redis:6379
       - INSTANCE_ID=01
       - PAYMENT_PROCESSOR_SERVICE_DEFAULT_URL=http://localhost:8001
       - PAYMENT_PROCESSOR_SERVICE_FALLBACK_URL=http://localhost:8002
-      - INSTANCE_ID=01
 
   backend-02:
     <<: *backend
     container_name: backend-02
     hostname: backend-02
+    deploy:
+      resources:
+        limits:
+          cpus: "0.4"
+          memory: "70MB"
     environment:
       - NODE_ENV=production
       - PORT=3000
       - MONGODB_URI=mongodb://admin:password123@mongodb:27017/rinha?authSource=admin
+      - REDIS_URL=redis://redis:6379
       - INSTANCE_ID=02
       - PAYMENT_PROCESSOR_SERVICE_DEFAULT_URL=http://localhost:8001
       - PAYMENT_PROCESSOR_SERVICE_FALLBACK_URL=http://localhost:8002
-      - INSTANCE_ID=02
+
   nginx:
     image: nginx:alpine
     container_name: load-balancer
@@ -100,11 +126,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.25"
-          memory: "64MB"
-        reservations:
-          cpus: "0.1"
-          memory: "32MB"
+          cpus: "0.3"
+          memory: "10MB"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9999/health"]
@@ -121,4 +144,6 @@ networks:
 
 volumes:
   mongodb_data:
-    driver: local 
+    driver: local
+  redis_data:
+    driver: local

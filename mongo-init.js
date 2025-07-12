@@ -1,8 +1,6 @@
 // MongoDB initialization script for Rinha de Backend 2025
 // This script runs when the MongoDB container starts for the first time
 
-const { syncBuiltinESMExports } = require("module");
-
 // Switch to the rinha database
 db = db.getSiblingDB("rinha");
 
