@@ -35,14 +35,18 @@ export async function addProcessToQueue(paymentRequest: PaymentRequest) {
   }
 }
 
-export async function getNextPaymentFromQueue(): Promise<any | null> {
+export async function getNextPaymentsFromQueue({
+  numberOfPayments = 1,
+}: {
+  numberOfPayments: number;
+}): Promise<PaymentRequest[] | null> {
   try {
     const client = await initializeRedisClient();
 
-    const paymentData = await client.rPop("payment_queue");
+    const paymentData = await client.lPopCount("payment_queue", numberOfPayments);
 
     if (paymentData) {
-      return JSON.parse(paymentData);
+      return paymentData.map((payment) => JSON.parse(payment)) as PaymentRequest[];
     }
 
     return null;
@@ -107,5 +111,35 @@ export async function closeRedisClient() {
     await redisClient.quit();
     redisClient = null;
     console.log("🔌 Redis Client disconnected");
+  }
+}
+
+export async function getMultiplePaymentsFromQueue({
+  numberOfPayments = 1,
+}: {
+  numberOfPayments: number;
+}): Promise<any[]> {
+  try {
+    const client = await initializeRedisClient();
+
+    // Criar pipeline com múltiplos lPop
+    const pipeline = client.multi();
+    for (let i = 0; i < numberOfPayments; i++) {
+      pipeline.lPop("payment_queue");
+    }
+
+    const results = await pipeline.exec();
+
+    if (results) {
+      return results
+        .map((result) => result[1])
+        .filter((payment) => payment !== null)
+        .map((payment) => JSON.parse(payment as string));
+    }
+
+    return [];
+  } catch (error) {
+    console.error("❌ Error getting multiple payments from Redis queue:", error);
+    throw error;
   }
 }

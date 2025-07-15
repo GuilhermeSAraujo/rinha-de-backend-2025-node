@@ -2,7 +2,7 @@ import type { PaymentRequest } from "./index";
 import { db, INSTANCE_ID } from "./index";
 import {
   addProcessToQueue,
-  getNextPaymentFromQueue,
+  getNextPaymentsFromQueue,
   getShouldCallFallback,
   getShouldTimeoutAllCalls,
   setShouldCallFallback,
@@ -18,7 +18,15 @@ let isProcessing = false;
 let processingCount = 0;
 let errorCount = 0;
 
-const MAX_CONCURRENT_PAYMENTS = 25;
+let MAX_CONCURRENT_PAYMENTS = 10;
+
+const paymentsToBeSaved: {
+  correlation_id: string;
+  amount: number;
+  service: string;
+  requested_at: Date;
+  success: boolean;
+}[] = [];
 
 export async function processPayment(payment: PaymentRequest) {
   const shouldCallFallback = await getShouldCallFallback();
@@ -27,6 +35,7 @@ export async function processPayment(payment: PaymentRequest) {
     : PAYMENT_PROCESSOR_DEFAULT_URL;
   try {
     const requestedAt = new Date();
+
     const response = await fetch(`${service}/payments`, {
       method: "POST",
       headers: {
@@ -47,8 +56,7 @@ export async function processPayment(payment: PaymentRequest) {
         setShouldCallFallback(false);
       }
 
-      const collection = db.collection("payments");
-      collection.insertOne({
+      paymentsToBeSaved.push({
         correlation_id: payment.correlationId,
         amount: payment.amount,
         service: requestService,
@@ -85,23 +93,49 @@ export function consumePaymentsFromQueueWithInterval() {
     try {
       const shouldTimeoutAllCalls = await getShouldTimeoutAllCalls();
 
-      if (processingCount >= MAX_CONCURRENT_PAYMENTS || shouldTimeoutAllCalls) {
+      if (processingCount >= MAX_CONCURRENT_PAYMENTS) {
         return;
       }
 
-      const payment = await getNextPaymentFromQueue();
+      if (shouldTimeoutAllCalls) {
+        return;
+      }
+
+      const payment = await getNextPaymentsFromQueue({
+        numberOfPayments: MAX_CONCURRENT_PAYMENTS - processingCount,
+      });
 
       if (payment) {
-        processingCount++;
+        processingCount += payment.length;
 
-        processPayment(payment).finally(() => {
-          processingCount--;
-        });
+        const paymentsPromises = payment.map((p) => processPayment(p));
+
+        await Promise.all(paymentsPromises);
+
+        processingCount -= payment.length;
       }
     } catch (error) {
       console.error("❌ Error in payment consumer:", error);
     }
   }, 100);
+
+  setInterval(async () => {
+    try {
+      if (paymentsToBeSaved.length === 0) {
+        return;
+      }
+      if (paymentsToBeSaved.length > 0) {
+        console.log("💾 Saving payments to database:", paymentsToBeSaved.length);
+        await db.collection("payments").insertMany(paymentsToBeSaved);
+        paymentsToBeSaved.length = 0;
+        console.log("✅ Payments saved to database successfully", {
+          "paymentsToBeSaved.length": paymentsToBeSaved.length,
+        });
+      }
+    } catch (error) {
+      console.error("❌ Error saving payments to database:", error);
+    }
+  }, 1000);
 
   (global as any).paymentConsumerInterval = interval;
 }
@@ -114,7 +148,7 @@ export function verifyServiceAvailabilityWithInterval() {
   const interval = setInterval(async () => {
     try {
       if (processingCount >= MAX_CONCURRENT_PAYMENTS) {
-        return;
+        console.log("🚨 processingCount >= MAX_CONCURRENT_PAYMENTS", processingCount, "🚨");
       }
 
       const [defaultService, fallbackService] = await Promise.all([
@@ -156,17 +190,21 @@ export function verifyServiceAvailabilityWithInterval() {
 
       if (!isDefaultServiceAvailable && !isFallbackServiceAvailable) {
         await setShouldTimeoutAllCalls(true);
+        MAX_CONCURRENT_PAYMENTS = 1;
         return;
       }
 
       if (isDefaultServiceAvailable) {
         await setShouldCallFallback(false);
         await setShouldTimeoutAllCalls(false);
+        MAX_CONCURRENT_PAYMENTS = 100;
+        return;
       }
 
       if (!isDefaultServiceAvailable && isFallbackServiceAvailable) {
         await setShouldCallFallback(true);
         await setShouldTimeoutAllCalls(false);
+        MAX_CONCURRENT_PAYMENTS = 5;
       }
     } catch (error) {
       console.error("❌ Error in verifyServiceAvailabilityWithInterval:", error);
