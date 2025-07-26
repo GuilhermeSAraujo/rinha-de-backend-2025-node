@@ -4,7 +4,6 @@ x-service-templates:
       context: .
       dockerfile: Dockerfile
     depends_on:
-      - mongodb
       - redis
     networks:
       - payment-processor
@@ -14,44 +13,17 @@ x-service-templates:
     environment:
       - NODE_ENV=production
       - PORT=3000
-      - MONGODB_URI=mongodb://admin:password123@mongodb:27017/rinha?authSource=admin
       - REDIS_URL=redis://redis:6379
       - PAYMENT_PROCESSOR_SERVICE_DEFAULT_URL=http://localhost:8001
       - PAYMENT_PROCESSOR_SERVICE_FALLBACK_URL=http://localhost:8002
-
     restart: unless-stopped
+
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
 
 services:
-  mongodb:
-    image: mongo:7.0
-    container_name: mongodb
-    hostname: mongodb
-    environment:
-      - MONGO_INITDB_ROOT_USERNAME=admin
-      - MONGO_INITDB_ROOT_PASSWORD=password123
-      - MONGO_INITDB_DATABASE=rinha
-      - MONGODB_INITDB_SET_MAX_CONNECTIONS=50
-      - MONGODB_INITDB_SET_WIRED_TIGER_CACHE_SIZE_GB=0.1
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongodb_data:/data/db
-      - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
-    networks:
-      - backend
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: "180MB"
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-
   redis:
     image: redis:8.0.3-alpine
     container_name: redis
@@ -74,6 +46,17 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    command: >
+      redis-server
+      --maxmemory 40mb
+      --maxmemory-policy allkeys-lru
+      --tcp-keepalive 60
+      --timeout 0
+      --tcp-backlog 511
 
   backend-01:
     <<: *backend
@@ -87,7 +70,6 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
-      - MONGODB_URI=mongodb://admin:password123@mongodb:27017/rinha?authSource=admin
       - REDIS_URL=redis://redis:6379
       - INSTANCE_ID=01
       - PAYMENT_PROCESSOR_SERVICE_DEFAULT_URL=http://localhost:8001
@@ -105,7 +87,6 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
-      - MONGODB_URI=mongodb://admin:password123@mongodb:27017/rinha?authSource=admin
       - REDIS_URL=redis://redis:6379
       - INSTANCE_ID=02
       - PAYMENT_PROCESSOR_SERVICE_DEFAULT_URL=http://localhost:8001
@@ -135,6 +116,10 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
 
 networks:
   backend:
@@ -143,7 +128,5 @@ networks:
     external: true
 
 volumes:
-  mongodb_data:
-    driver: local
   redis_data:
     driver: local
