@@ -93,9 +93,10 @@ export function startServiceHealthMonitor(instanceId: string): void {
         await setShouldTimeoutAllCalls(false);
       }
     } catch (error) {
-      console.error("❌ Error in service health monitor:", error);
+      //   console.error("❌ Error in service health monitor:", error);
+      return;
     }
-  }, 4100);
+  }, 2100);
 
   (global as any).serviceHealthInterval = interval;
 }
