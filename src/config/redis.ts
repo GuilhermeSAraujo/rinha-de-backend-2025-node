@@ -2,7 +2,6 @@ import { createClient, RedisClientType } from "redis";
 
 let redisClient: RedisClientType | null = null;
 
-// Create a Redis connection pool
 const REDIS_CONNECTION_POOL_SIZE = 10;
 const redisPool: RedisClientType[] = [];
 let poolIndex = 0;
@@ -27,11 +26,11 @@ export async function initializeRedisClient() {
     });
 
     redisClient.on("error", (err) => {
-      console.error("❌ Redis Client Error:", err);
+      console.error("Redis Client Error:", err);
     });
 
     redisClient.on("connect", () => {
-      console.log("✅ Redis Client Connected");
+      console.log("Redis Client Connected");
     });
 
     await redisClient.connect();
@@ -48,7 +47,7 @@ export async function initializeRedisClient() {
       });
 
       poolClient.on("error", (err) => {
-        console.error(`❌ Redis Pool Client ${i} Error:`, err);
+        console.error(`Redis Pool Client ${i} Error:`, err);
       });
 
       await poolClient.connect();
@@ -56,17 +55,14 @@ export async function initializeRedisClient() {
     }
 
     poolInitialized = true;
-    console.log(
-      `✅ Redis connection pool initialized with ${REDIS_CONNECTION_POOL_SIZE} connections`
-    );
+    console.log(`Redis connection pool initialized with ${REDIS_CONNECTION_POOL_SIZE} connections`);
   }
   return redisClient;
 }
 
 export async function getPooledRedisClient(): Promise<RedisClientType> {
-  // If pool not initialized, fall back to main client
   if (!poolInitialized || redisPool.length === 0) {
-    console.warn("⚠️ Redis pool not ready, using main client");
+    console.warn("Redis pool not ready, using main client");
     if (!redisClient) {
       await initializeRedisClient();
     }
@@ -76,19 +72,4 @@ export async function getPooledRedisClient(): Promise<RedisClientType> {
   const client = redisPool[poolIndex];
   poolIndex = (poolIndex + 1) % REDIS_CONNECTION_POOL_SIZE;
   return client;
-}
-
-export async function closeRedisClient() {
-  poolInitialized = false;
-
-  if (redisClient) {
-    await redisClient.quit();
-    redisClient = null;
-  }
-
-  // Close all pooled connections
-  await Promise.all(redisPool.map((client) => client.quit()));
-  redisPool.length = 0;
-
-  console.log("🔌 Redis Clients disconnected");
 }

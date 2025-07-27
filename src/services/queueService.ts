@@ -9,7 +9,7 @@ export async function addPaymentToQueue(paymentRequest: PaymentRequest): Promise
     const client = await getPooledRedisClient();
     await client.lPush("payment_queue", JSON.stringify(paymentRequest));
   } catch (error) {
-    console.error("❌ Error adding payment to Redis queue:", error);
+    console.error("Error adding payment to Redis queue:", error);
     throw error;
   }
 }
@@ -25,7 +25,7 @@ export async function getNextPaymentFromQueue(): Promise<PaymentRequest | null> 
 
     return null;
   } catch (error) {
-    console.error("❌ Error getting payment from Redis queue:", error);
+    console.error("Error getting payment from Redis queue:", error);
     throw error;
   }
 }
@@ -35,7 +35,7 @@ export async function getQueueLength(): Promise<number> {
     const client = await getPooledRedisClient();
     return await client.lLen("payment_queue");
   } catch (error) {
-    console.error("❌ Error getting queue length:", error);
+    console.error("Error getting queue length:", error);
     return 0;
   }
 }
@@ -46,8 +46,8 @@ export async function getShouldCallFallback(): Promise<boolean> {
     const value = await client.get(FALLBACK_FLAG_KEY);
     return value === "true";
   } catch (error) {
-    console.error("❌ Error getting fallback flag from Redis:", error);
-    return false; // Default to false on error
+    console.error("Error getting fallback flag from Redis:", error);
+    return false;
   }
 }
 
@@ -56,7 +56,7 @@ export async function setShouldCallFallback(value: boolean): Promise<void> {
     const client = await getPooledRedisClient();
     await client.set(FALLBACK_FLAG_KEY, value.toString());
   } catch (error) {
-    console.error("❌ Error setting fallback flag in Redis:", error);
+    console.error("Error setting fallback flag in Redis:", error);
   }
 }
 
@@ -66,7 +66,7 @@ export async function getShouldTimeoutAllCalls(): Promise<boolean> {
     const value = await client.get(TIMEOUT_FLAG_KEY);
     return value === "true";
   } catch (error) {
-    console.error("❌ Error getting timeout flag from Redis:", error);
+    console.error("Error getting timeout flag from Redis:", error);
     return false;
   }
 }
@@ -76,6 +76,6 @@ export async function setShouldTimeoutAllCalls(value: boolean): Promise<void> {
     const client = await getPooledRedisClient();
     await client.set(TIMEOUT_FLAG_KEY, value.toString());
   } catch (error) {
-    console.error("❌ Error setting timeout flag in Redis:", error);
+    console.error("Error setting timeout flag in Redis:", error);
   }
 }

@@ -93,7 +93,6 @@ export function startServiceHealthMonitor(instanceId: string): void {
         await setShouldTimeoutAllCalls(false);
       }
     } catch (error) {
-      //   console.error("❌ Error in service health monitor:", error);
       return;
     }
   }, 2100);
@@ -112,5 +111,5 @@ export function stopWorkers(): void {
     clearInterval((global as any).serviceHealthInterval);
   }
 
-  console.log("🛑 Payment workers stopped");
+  console.log("Payment workers stopped");
 }

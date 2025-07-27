@@ -1,5 +1,5 @@
-import { PaymentRequest, PaymentProcessor, ServiceHealthResponse } from "../types/payment";
-import { PaymentRepository } from "../repositories/paymentRepository";
+import { savePayment } from "../repositories/paymentRepository";
+import { PaymentProcessor, PaymentRequest, ServiceHealthResponse } from "../types/payment";
 import {
   addPaymentToQueue,
   getShouldCallFallback,
@@ -39,7 +39,7 @@ export async function processPayment(payment: PaymentRequest): Promise<void> {
         setShouldCallFallback(false);
       }
 
-      await PaymentRepository.savePayment({
+      await savePayment({
         correlationId: payment.correlationId,
         amount: payment.amount,
         processor: requestService,
