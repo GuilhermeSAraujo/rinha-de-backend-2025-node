@@ -61,6 +61,7 @@ export async function initializeRedisClient() {
 }
 
 export async function getPooledRedisClient(): Promise<RedisClientType> {
+  // console.log("[getPooledRedisClient] Pool initialized", poolInitialized, redisPool.length);
   if (!poolInitialized || redisPool.length === 0) {
     console.warn("Redis pool not ready, using main client");
     if (!redisClient) {
@@ -72,4 +73,31 @@ export async function getPooledRedisClient(): Promise<RedisClientType> {
   const client = redisPool[poolIndex];
   poolIndex = (poolIndex + 1) % REDIS_CONNECTION_POOL_SIZE;
   return client;
+}
+
+// Lightweight Redis client for worker processes - avoids creating full connection pools
+let workerRedisClient: RedisClientType | null = null;
+
+export async function getWorkerRedisClient(): Promise<RedisClientType> {
+  if (!workerRedisClient) {
+    workerRedisClient = createClient({
+      url: process.env.REDIS_URL || "redis://localhost:6379",
+      socket: {
+        connectTimeout: 5000,
+        timeout: 5000,
+        keepAlive: true,
+      },
+    });
+
+    workerRedisClient.on("error", (err) => {
+      console.error("Worker Redis Client Error:", err);
+    });
+
+    workerRedisClient.on("connect", () => {
+      console.log("Worker Redis Client Connected");
+    });
+
+    await workerRedisClient.connect();
+  }
+  return workerRedisClient;
 }

@@ -3,12 +3,22 @@ import { getSummary, resetDatabaseData } from "../repositories/paymentRepository
 import { addPaymentToQueue, getQueueLength } from "../services/queueService";
 import { HealthResponse, PaymentRequest } from "../types/payment";
 
+import workerpool from "workerpool";
+
+const pool = workerpool.pool(__dirname + "/../workers/enqueueWorker.js", {
+  workerType: "thread",
+});
+
 export const PaymentController = {
   createPayment: (req: Request, res: Response) => {
     try {
       const { correlationId, amount } = req.body as PaymentRequest;
 
-      addPaymentToQueue({ correlationId, amount });
+      if (pool.stats().busyWorkers < 3) {
+        pool.exec("addPaymentToQueue", [{ correlationId, amount }]);
+      } else {
+        setImmediate(() => addPaymentToQueue({ correlationId, amount }));
+      }
 
       return res.status(202).end();
     } catch (error) {

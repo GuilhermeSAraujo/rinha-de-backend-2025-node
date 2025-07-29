@@ -5,13 +5,8 @@ const FALLBACK_FLAG_KEY = "should_call_fallback";
 const TIMEOUT_FLAG_KEY = "should_timeout_all_calls";
 
 export async function addPaymentToQueue(paymentRequest: PaymentRequest): Promise<void> {
-  try {
-    const client = await getPooledRedisClient();
-    await client.lPush("payment_queue", JSON.stringify(paymentRequest));
-  } catch (error) {
-    console.error("Error adding payment to Redis queue:", error);
-    throw error;
-  }
+  const client = await getPooledRedisClient();
+  await client.lPush("payment_queue", JSON.stringify(paymentRequest));
 }
 
 export async function getNextPaymentFromQueue(): Promise<PaymentRequest | null> {

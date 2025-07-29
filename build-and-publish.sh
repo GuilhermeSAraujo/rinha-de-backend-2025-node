@@ -1,28 +1,11 @@
-#!/bin/bash
+echo "🚀 Building and publishing Docker image..."
 
-# Build and publish script for Rinha de Backend 2025 - Node.js API
+docker build -t guilhermesouzaaraujo/rinha-2025-node:latest .
 
-set -e
+echo "✅ Docker image built successfully!"
 
-echo "🚀 Building Rinha de Backend 2025 - Node.js API"
+echo "🚀 Pushing Docker image to Docker Hub..."
 
-# Clean previous builds
-echo "🧹 Cleaning previous builds..."
-rm -rf dist
-rm -rf node_modules
+docker push guilhermesouzaaraujo/rinha-2025-node:latest
 
-# Install dependencies
-echo "📦 Installing dependencies..."
-npm ci --only=production=false
-
-# Build TypeScript
-echo "🔨 Building TypeScript..."
-npm run build
-
-# Build Docker image
-echo "🐳 Building Docker image..."
-docker build -t rinha-node-backend .
-
-echo "✅ Build completed successfully!"
-echo "🚀 To run with docker-compose: docker-compose up --build"
-echo "🌐 Server will be available at: http://localhost:9999" 
+echo "✅ Docker image pushed successfully!"

@@ -1,5 +1,6 @@
+import { Agent, fetch } from "undici";
 import { savePayment } from "../repositories/paymentRepository";
-import { PaymentProcessor, PaymentRequest, ServiceHealthResponse } from "../types/payment";
+import { PaymentRequest, ServiceHealthResponse } from "../types/payment";
 import {
   addPaymentToQueue,
   getShouldCallFallback,
@@ -10,62 +11,71 @@ import {
 const PAYMENT_PROCESSOR_DEFAULT_URL = "http://payment-processor-default:8080";
 const PAYMENT_PROCESSOR_FALLBACK_URL = "http://payment-processor-fallback:8080";
 
+const defaultAgent = new Agent({
+  keepAliveTimeout: 10_000, // 10s
+  keepAliveMaxTimeout: 60_000, // 60s
+  connections: 100, // Similar ao maxSockets
+  pipelining: 15, // HTTP pipelining
+});
+
+const fallbackAgent = new Agent({
+  keepAliveTimeout: 10_000, // 10s
+  keepAliveMaxTimeout: 60_000, // 60s
+  connections: 100, // Similar ao maxSockets
+  pipelining: 15, // HTTP pipelining
+});
+
 export async function processPayment(payment: PaymentRequest): Promise<void> {
-  const shouldCallFallback = await getShouldCallFallback();
-  const service = shouldCallFallback
-    ? PAYMENT_PROCESSOR_FALLBACK_URL
-    : PAYMENT_PROCESSOR_DEFAULT_URL;
+  const useFallback = await getShouldCallFallback();
+  const agent = useFallback ? fallbackAgent : defaultAgent;
+  const serviceUrl = useFallback ? PAYMENT_PROCESSOR_FALLBACK_URL : PAYMENT_PROCESSOR_DEFAULT_URL;
 
   try {
-    const requestedAt = new Date();
+    const requestedAt = new Date().toISOString();
 
-    const response = await fetch(`${service}/payments`, {
+    const response = await fetch(`${serviceUrl}/payments`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "X-Rinha-Token": "123",
       },
       body: JSON.stringify({ ...payment, requestedAt }),
+      dispatcher: agent,
     });
-
-    const requestService: PaymentProcessor =
-      service === PAYMENT_PROCESSOR_FALLBACK_URL ? "fallback" : "default";
 
     if (response.ok) {
       setShouldTimeoutAllCalls(false);
-      if (service === PAYMENT_PROCESSOR_FALLBACK_URL) {
-        setShouldCallFallback(true);
-      } else {
-        setShouldCallFallback(false);
-      }
-
-      await savePayment({
+      setShouldCallFallback(useFallback);
+      savePayment({
         correlationId: payment.correlationId,
         amount: payment.amount,
-        processor: requestService,
-        requestedAt: requestedAt.toISOString(),
+        processor: useFallback ? "fallback" : "default",
+        requestedAt,
       });
     } else {
       await addPaymentToQueue(payment);
     }
   } catch (error) {
-    console.log(
+    console.error(
       `❌ Payment exception: ${payment.correlationId} via ${
-        service === PAYMENT_PROCESSOR_FALLBACK_URL ? "fallback" : "default"
-      } - Error:`,
+        useFallback ? "fallback" : "default"
+      } -`,
       error
     );
     await addPaymentToQueue(payment);
   }
 }
-
 export async function checkServiceHealth(): Promise<{
   defaultService: ServiceHealthResponse;
   fallbackService: ServiceHealthResponse;
 }> {
   const [defaultServiceResponse, fallbackServiceResponse] = await Promise.all([
-    fetch(`${PAYMENT_PROCESSOR_DEFAULT_URL}/payments/service-health`),
-    fetch(`${PAYMENT_PROCESSOR_FALLBACK_URL}/payments/service-health`),
+    fetch(`${PAYMENT_PROCESSOR_DEFAULT_URL}/payments/service-health`, {
+      dispatcher: defaultAgent,
+    }),
+    fetch(`${PAYMENT_PROCESSOR_FALLBACK_URL}/payments/service-health`, {
+      dispatcher: fallbackAgent,
+    }),
   ]);
 
   if (!defaultServiceResponse.ok || !fallbackServiceResponse.ok) {

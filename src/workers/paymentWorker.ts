@@ -7,9 +7,8 @@ import {
   setShouldTimeoutAllCalls,
 } from "../services/queueService";
 
-let processingCount = 0;
-let activeWorkers = 0;
-let MAX_CONCURRENT_PAYMENTS = 20;
+let activeProcessing = 0;
+let MAX_CONCURRENT_PAYMENTS = 10;
 
 export function startWorkers(concurrency: number = MAX_CONCURRENT_PAYMENTS): void {
   console.log(`🚀 Starting workers with concurrency ${concurrency}...`);
@@ -18,27 +17,25 @@ export function startWorkers(concurrency: number = MAX_CONCURRENT_PAYMENTS): voi
     const shouldTimeoutAllCalls = await getShouldTimeoutAllCalls();
 
     if (shouldTimeoutAllCalls) {
-      setTimeout(() => processQueue(), 250);
+      setTimeout(() => processQueue(), 500);
       return;
     }
 
-    while (activeWorkers < concurrency) {
+    while (activeProcessing < concurrency) {
       const payment = await getNextPaymentFromQueue();
       if (!payment) {
         setImmediate(() => processQueue());
         return;
       }
 
-      activeWorkers++;
-      processingCount++;
+      activeProcessing++;
 
       processPayment(payment)
         .catch((err) => {
           console.error("❌ Error processing payment:", err);
         })
         .finally(() => {
-          activeWorkers--;
-          processingCount--;
+          activeProcessing--;
           setImmediate(() => processQueue());
         });
     }
@@ -54,16 +51,12 @@ export function startServiceHealthMonitor(instanceId: string): void {
 
   const interval = setInterval(async () => {
     try {
-      if (processingCount >= MAX_CONCURRENT_PAYMENTS) {
-        console.log("🚨 processingCount >= MAX_CONCURRENT_PAYMENTS", processingCount, "🚨");
-      }
-
       const { defaultService, fallbackService } = await checkServiceHealth();
       const queueSize = await getQueueLength();
 
       console.log({
         queueSize,
-        activeWorkers,
+        activeProcessing,
         defaultServiceStatus: {
           failing: defaultService.failing,
           minResponseTime: defaultService.minResponseTime,
@@ -101,11 +94,7 @@ export function startServiceHealthMonitor(instanceId: string): void {
 }
 
 export function stopWorkers(): void {
-  activeWorkers = 0;
-
-  if ((global as any).paymentSaveInterval) {
-    clearInterval((global as any).paymentSaveInterval);
-  }
+  activeProcessing = 0;
 
   if ((global as any).serviceHealthInterval) {
     clearInterval((global as any).serviceHealthInterval);

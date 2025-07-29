@@ -37,8 +37,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.1"
-          memory: "20MB"
+          cpus: "0.05"
+          memory: "12MB"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -65,8 +65,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.4"
-          memory: "70MB"
+          cpus: "0.70"
+          memory: "164MB"
     environment:
       - NODE_ENV=production
       - PORT=3000
@@ -82,8 +82,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.4"
-          memory: "70MB"
+          cpus: "0.70"
+          memory: "166MB"
     environment:
       - NODE_ENV=production
       - PORT=3000
@@ -107,8 +107,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.3"
-          memory: "10MB"
+          cpus: "0.05"
+          memory: "8MB"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9999/health"]
